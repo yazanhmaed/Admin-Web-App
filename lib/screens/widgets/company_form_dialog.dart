@@ -3,17 +3,18 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/theme.dart';
+import '../../core/utils/code_generator.dart';
 import '../../core/utils/validators.dart';
 import '../../data/companies_repository.dart';
 import '../../models/company.dart';
 import '../../models/company_firebase_config.dart';
-import 'firebase_import_drop_zone.dart';
+import 'firebase_config_import.dart';
 
 /// نموذج إضافة/تعديل شركة. عند تمرير [existingCompany] يعمل بوضع التعديل
 /// (الكود غير قابل للتغيير حينها).
 ///
-/// كود الشركة الآن يُولَّد بالكامل تلقائياً (تسلسلي بصيغة CMP-0001...)
-/// ولا يمكن إدخاله أو تعديله يدوياً — راجع
+/// كود الشركة يُولَّد بالكامل تلقائياً (بادئة من اسم الشركة + رقم تسلسلي،
+/// مثال: ACM-001) ولا يمكن إدخاله أو تعديله يدوياً — راجع
 /// [CompaniesRepository.createCompanyWithAutoCode].
 class CompanyFormDialog extends StatefulWidget {
   const CompanyFormDialog({super.key, this.existingCompany});
@@ -49,10 +50,20 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
   late bool _isActive;
 
   /// كود الشركة: بوضع التعديل هو كود الشركة الحالي (ثابت). بوضع الإضافة
-  /// هو معاينة غير نهائية للكود التالي المتوقّع — يُعاد توليده فعلياً
-  /// وبشكل ذرّي داخل معاملة Firestore عند الحفظ.
-  String? _previewCode;
+  /// نعرض معاينة حيّة تتحدّث مع كل تغيير باسم الشركة (البادئة تُشتق من
+  /// الاسم فوراً محلياً)، بينما الرقم التسلسلي [_previewNextNumber] يُجلب
+  /// مرة واحدة عند فتح النموذج. المصدر النهائي الحقيقي للكود يُولَّد
+  /// ذرّياً داخل معاملة Firestore عند الحفظ الفعلي.
+  int? _previewNextNumber;
   bool _isLoadingPreviewCode = false;
+  String? get _fixedCode => _isEditMode ? widget.existingCompany!.code : null;
+
+  String? get _previewCode {
+    if (_isEditMode) return _fixedCode;
+    if (_previewNextNumber == null) return null;
+    final prefix = CompanyCodeFormat.abbreviate(_nameController.text);
+    return CompanyCodeFormat.format(prefix, _previewNextNumber!);
+  }
 
   bool _isSaving = false;
   String? _saveError;
@@ -89,21 +100,23 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
         company?.expiryDate ?? DateTime.now().add(const Duration(days: 365));
     _isActive = company?.isActive ?? true;
 
-    if (_isEditMode) {
-      _previewCode = company!.code;
-    } else {
-      _loadPreviewCode();
+    if (!_isEditMode) {
+      // البادئة تتحدّث تلقائياً مع كل تغيير بالاسم (معاينة محلية فورية).
+      _nameController.addListener(_onNameChangedForPreview);
+      _loadPreviewNumber();
     }
   }
 
-  Future<void> _loadPreviewCode() async {
+  void _onNameChangedForPreview() => setState(() {});
+
+  Future<void> _loadPreviewNumber() async {
     setState(() => _isLoadingPreviewCode = true);
     try {
       final repo = context.read<CompaniesRepository>();
-      final code = await repo.previewNextCode();
+      final next = await repo.previewNextNumber();
       if (!mounted) return;
       setState(() {
-        _previewCode = code;
+        _previewNextNumber = next;
         _isLoadingPreviewCode = false;
       });
     } catch (_) {
@@ -114,6 +127,9 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
 
   @override
   void dispose() {
+    if (!_isEditMode) {
+      _nameController.removeListener(_onNameChangedForPreview);
+    }
     _nameController.dispose();
     _emailController.dispose();
     _androidApiKey.dispose();
@@ -142,23 +158,24 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
     }
   }
 
-  void _applyImportedFirebaseData(FirebaseImportData data) {
+  void _applyAndroidExtracted(Map<String, String> fields) {
     setState(() {
-      if (data.android != null) {
-        _androidApiKey.text = data.android!.apiKey;
-        _androidAppId.text = data.android!.appId;
-        _androidSenderId.text = data.android!.messagingSenderId;
-        _androidProjectId.text = data.android!.projectId;
-        _androidStorageBucket.text = data.android!.storageBucket;
-      }
-      if (data.ios != null) {
-        _iosApiKey.text = data.ios!.apiKey;
-        _iosAppId.text = data.ios!.appId;
-        _iosSenderId.text = data.ios!.messagingSenderId;
-        _iosProjectId.text = data.ios!.projectId;
-        _iosStorageBucket.text = data.ios!.storageBucket;
-        _iosBundleId.text = data.ios!.iosBundleId;
-      }
+      _androidApiKey.text = fields['apiKey'] ?? '';
+      _androidAppId.text = fields['appId'] ?? '';
+      _androidSenderId.text = fields['messagingSenderId'] ?? '';
+      _androidProjectId.text = fields['projectId'] ?? '';
+      _androidStorageBucket.text = fields['storageBucket'] ?? '';
+    });
+  }
+
+  void _applyIosExtracted(Map<String, String> fields) {
+    setState(() {
+      _iosApiKey.text = fields['apiKey'] ?? '';
+      _iosAppId.text = fields['appId'] ?? '';
+      _iosSenderId.text = fields['messagingSenderId'] ?? '';
+      _iosProjectId.text = fields['projectId'] ?? '';
+      _iosStorageBucket.text = fields['storageBucket'] ?? '';
+      _iosBundleId.text = fields['iosBundleId'] ?? '';
     });
   }
 
@@ -225,6 +242,7 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
         await repo.updateCompany(company);
       } else {
         await repo.createCompanyWithAutoCode(
+          _nameController.text,
           (code) => Company(
             code: code,
             name: _nameController.text,
@@ -292,7 +310,7 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                             labelText: 'الكود (يُولَّد تلقائياً)',
                             helperText: _isEditMode
                                 ? 'كود ثابت لا يمكن تعديله. لتغييره، أنشئ شركة جديدة واحذف هذه.'
-                                : 'يتولّد رقم تسلسلي فريد تلقائياً عند الحفظ.',
+                                : 'بادئة من اسم الشركة + رقم تسلسلي. يتحدّث مع الاسم، ويتولّد نهائياً عند الحفظ.',
                             helperMaxLines: 2,
                             filled: true,
                             fillColor: Colors.grey.shade100,
@@ -340,15 +358,16 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                           value: _isActive,
                           onChanged: (v) => setState(() => _isActive = v),
                         ),
-                        const SizedBox(height: 16),
-                        _SectionTitle('استيراد بيانات Firebase (اختياري)'),
-                        const SizedBox(height: 10),
-                        FirebaseImportDropZone(
-                          onImported: _applyImportedFirebaseData,
-                        ),
                         const SizedBox(height: 20),
                         _SectionTitle('بيانات Firebase - Android'),
                         const SizedBox(height: 10),
+                        FirebaseConfigFilePicker(
+                          buttonLabel: 'استيراد من ملف google-services.json',
+                          allowedExtensions: const ['json'],
+                          parse: parseGoogleServicesJson,
+                          onExtracted: _applyAndroidExtracted,
+                        ),
+                        const SizedBox(height: 12),
                         _buildFieldGrid([
                           TextFormField(
                             controller: _androidApiKey,
@@ -389,6 +408,14 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                         const SizedBox(height: 20),
                         _SectionTitle('بيانات Firebase - iOS (اختياري)'),
                         const SizedBox(height: 10),
+                        FirebaseConfigFilePicker(
+                          buttonLabel:
+                              'استيراد من ملف GoogleService-Info.plist',
+                          allowedExtensions: const ['plist'],
+                          parse: parseGoogleServiceInfoPlist,
+                          onExtracted: _applyIosExtracted,
+                        ),
+                        const SizedBox(height: 12),
                         _buildFieldGrid([
                           TextFormField(
                             controller: _iosApiKey,
