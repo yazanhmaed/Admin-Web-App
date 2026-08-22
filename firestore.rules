@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /companies/{code} {
+      // قراءة مستند واحد بمعرفة الكود بالضبط: مسموحة للجميع
+      // (تطبيق المخزن يحتاجها للتحقق من الشركة قبل تسجيل الدخول).
+      allow get: if true;
+
+      // القراءة الجماعية (list) لكل الشركات: مسموحة فقط للمستخدمين
+      // المسجّلين دخول (الإدمن) — لمنع استخراج قائمة كل الأكواد.
+      allow list: if request.auth != null;
+
+      // الكتابة (إنشاء/تعديل/حذف): فقط للمستخدمين المسجّلين دخول (الإدمن).
+      allow create, update, delete: if request.auth != null;
+    }
+  }
+}
