@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../core/utils/code_generator.dart';
 import '../models/company.dart';
 import '../models/company_firebase_config.dart';
 
@@ -25,6 +26,48 @@ class CompaniesRepository {
 
   CollectionReference<Map<String, dynamic>> get _companiesRef =>
       _firestore.collection('companies');
+
+  /// مستند العدّاد المستخدم لتوليد أكواد الشركات التسلسلية (CMP-0001...).
+  DocumentReference<Map<String, dynamic>> get _companyCodeCounterRef =>
+      _firestore.collection('meta').doc('companyCodeCounter');
+
+  /// معاينة الكود التالي المتوقّع (لعرضه بالنموذج فور فتحه). قراءة غير
+  /// ذرّية — للعرض فقط، وليست المصدر النهائي للكود.
+  Future<String> previewNextCode() async {
+    final snap = await _companyCodeCounterRef.get();
+    final last = snap.data()?['lastNumber'];
+    final next = (last is int ? last : 0) + 1;
+    return CompanyCodeFormat.format(next);
+  }
+
+  /// ينشئ شركة جديدة بكود تسلسلي فريد يُولَّد ذرّياً (atomically) داخل
+  /// معاملة Firestore، لتفادي تعارض الأكواد عند الحفظ المتزامن من أكثر
+  /// من مستخدم في نفس اللحظة. يستدعي [buildCompany] بالكود النهائي بعد
+  /// توليده، ويُرجع الكود المُستخدم فعلياً.
+  Future<String> createCompanyWithAutoCode(
+    Company Function(String code) buildCompany,
+  ) {
+    return _firestore.runTransaction<String>((tx) async {
+      final counterSnap = await tx.get(_companyCodeCounterRef);
+      var next = ((counterSnap.data()?['lastNumber'] as int?) ?? 0) + 1;
+      var code = CompanyCodeFormat.format(next);
+      var docRef = _companiesRef.doc(code);
+      var docSnap = await tx.get(docRef);
+      // احتياط دفاعي: لو كان هناك مستند بنفس الكود بالفعل (مثلاً بسبب
+      // إنشاء يدوي سابق)، انتقل للرقم التالي حتى نجد كوداً غير مستخدم.
+      while (docSnap.exists) {
+        next += 1;
+        code = CompanyCodeFormat.format(next);
+        docRef = _companiesRef.doc(code);
+        docSnap = await tx.get(docRef);
+      }
+
+      final company = buildCompany(code);
+      tx.set(docRef, company.toCreateMap());
+      tx.set(_companyCodeCounterRef, {'lastNumber': next});
+      return code;
+    });
+  }
 
   /// تدفّق لحظي بكل الشركات (يُستخدم لتحديث القائمة تلقائياً).
   Stream<List<Company>> watchAll() {

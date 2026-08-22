@@ -1,20 +1,20 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/theme.dart';
-import '../../core/utils/code_generator.dart';
 import '../../core/utils/validators.dart';
 import '../../data/companies_repository.dart';
 import '../../models/company.dart';
 import '../../models/company_firebase_config.dart';
-
-enum _CodeCheckStatus { idle, checking, available, taken }
+import 'firebase_import_drop_zone.dart';
 
 /// نموذج إضافة/تعديل شركة. عند تمرير [existingCompany] يعمل بوضع التعديل
 /// (الكود غير قابل للتغيير حينها).
+///
+/// كود الشركة الآن يُولَّد بالكامل تلقائياً (تسلسلي بصيغة CMP-0001...)
+/// ولا يمكن إدخاله أو تعديله يدوياً — راجع
+/// [CompaniesRepository.createCompanyWithAutoCode].
 class CompanyFormDialog extends StatefulWidget {
   const CompanyFormDialog({super.key, this.existingCompany});
 
@@ -31,7 +31,6 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
 
   late final TextEditingController _nameController;
   late final TextEditingController _emailController;
-  late final TextEditingController _codeController;
 
   late final TextEditingController _androidApiKey;
   late final TextEditingController _androidAppId;
@@ -49,9 +48,12 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
   late DateTime _expiryDate;
   late bool _isActive;
 
-  bool _codeManuallyEdited = false;
-  Timer? _debounce;
-  _CodeCheckStatus _codeCheckStatus = _CodeCheckStatus.idle;
+  /// كود الشركة: بوضع التعديل هو كود الشركة الحالي (ثابت). بوضع الإضافة
+  /// هو معاينة غير نهائية للكود التالي المتوقّع — يُعاد توليده فعلياً
+  /// وبشكل ذرّي داخل معاملة Firestore عند الحفظ.
+  String? _previewCode;
+  bool _isLoadingPreviewCode = false;
+
   bool _isSaving = false;
   String? _saveError;
 
@@ -64,7 +66,6 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
 
     _nameController = TextEditingController(text: company?.name ?? '');
     _emailController = TextEditingController(text: company?.email ?? '');
-    _codeController = TextEditingController(text: company?.code ?? '');
 
     _androidApiKey = TextEditingController(text: company?.android.apiKey ?? '');
     _androidAppId = TextEditingController(text: company?.android.appId ?? '');
@@ -89,19 +90,32 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
     _isActive = company?.isActive ?? true;
 
     if (_isEditMode) {
-      _codeCheckStatus = _CodeCheckStatus.idle;
+      _previewCode = company!.code;
     } else {
-      _nameController.addListener(_onNameChanged);
-      _codeController.addListener(_onCodeChanged);
+      _loadPreviewCode();
+    }
+  }
+
+  Future<void> _loadPreviewCode() async {
+    setState(() => _isLoadingPreviewCode = true);
+    try {
+      final repo = context.read<CompaniesRepository>();
+      final code = await repo.previewNextCode();
+      if (!mounted) return;
+      setState(() {
+        _previewCode = code;
+        _isLoadingPreviewCode = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoadingPreviewCode = false);
     }
   }
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _nameController.dispose();
     _emailController.dispose();
-    _codeController.dispose();
     _androidApiKey.dispose();
     _androidAppId.dispose();
     _androidSenderId.dispose();
@@ -116,39 +130,6 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
     super.dispose();
   }
 
-  void _onNameChanged() {
-    if (_codeManuallyEdited || _isEditMode) return;
-    final suggested = CodeGenerator.suggestCode(_nameController.text);
-    _codeController.removeListener(_onCodeChanged);
-    _codeController.text = suggested;
-    _codeController.addListener(_onCodeChanged);
-    _scheduleCodeCheck();
-  }
-
-  void _onCodeChanged() {
-    _codeManuallyEdited = true;
-    _scheduleCodeCheck();
-  }
-
-  void _scheduleCodeCheck() {
-    _debounce?.cancel();
-    final code = _codeController.text.trim();
-    if (code.isEmpty) {
-      setState(() => _codeCheckStatus = _CodeCheckStatus.idle);
-      return;
-    }
-    setState(() => _codeCheckStatus = _CodeCheckStatus.checking);
-    _debounce = Timer(const Duration(milliseconds: 500), () async {
-      final repo = context.read<CompaniesRepository>();
-      final exists = await repo.codeExists(code);
-      if (!mounted || _codeController.text.trim() != code) return;
-      setState(() {
-        _codeCheckStatus =
-            exists ? _CodeCheckStatus.taken : _CodeCheckStatus.available;
-      });
-    });
-  }
-
   Future<void> _pickExpiryDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -159,6 +140,26 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
     if (picked != null) {
       setState(() => _expiryDate = picked);
     }
+  }
+
+  void _applyImportedFirebaseData(FirebaseImportData data) {
+    setState(() {
+      if (data.android != null) {
+        _androidApiKey.text = data.android!.apiKey;
+        _androidAppId.text = data.android!.appId;
+        _androidSenderId.text = data.android!.messagingSenderId;
+        _androidProjectId.text = data.android!.projectId;
+        _androidStorageBucket.text = data.android!.storageBucket;
+      }
+      if (data.ios != null) {
+        _iosApiKey.text = data.ios!.apiKey;
+        _iosAppId.text = data.ios!.appId;
+        _iosSenderId.text = data.ios!.messagingSenderId;
+        _iosProjectId.text = data.ios!.projectId;
+        _iosStorageBucket.text = data.ios!.storageBucket;
+        _iosBundleId.text = data.ios!.iosBundleId;
+      }
+    });
   }
 
   bool get _iosSectionTouched =>
@@ -181,25 +182,9 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
     setState(() => _saveError = null);
     if (!_formKey.currentState!.validate()) return;
 
-    final code = _codeController.text.trim();
-
-    if (!_isEditMode) {
-      if (_codeCheckStatus == _CodeCheckStatus.checking) {
-        setState(() => _saveError = 'الرجاء الانتظار حتى ينتهي فحص الكود.');
-        return;
-      }
-      setState(() => _codeCheckStatus = _CodeCheckStatus.checking);
-      final repo = context.read<CompaniesRepository>();
-      final exists = await repo.codeExists(code);
-      if (exists) {
-        setState(() {
-          _codeCheckStatus = _CodeCheckStatus.taken;
-          _saveError = 'هذا الكود مستخدم بالفعل، الرجاء اختيار كود آخر.';
-        });
-        return;
-      }
-      if (!mounted) return;
-      setState(() => _codeCheckStatus = _CodeCheckStatus.available);
+    if (!_isEditMode && _isLoadingPreviewCode) {
+      setState(() => _saveError = 'الرجاء الانتظار حتى يتم توليد الكود.');
+      return;
     }
 
     setState(() => _isSaving = true);
@@ -223,24 +208,35 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
           )
         : IosFirebaseConfig.empty;
 
-    final company = Company(
-      code: code,
-      name: _nameController.text,
-      email: _emailController.text,
-      isActive: _isActive,
-      expiryDate: _expiryDate,
-      createdAt: widget.existingCompany?.createdAt,
-      updatedAt: widget.existingCompany?.updatedAt,
-      android: android,
-      ios: ios,
-    );
-
     final repo = context.read<CompaniesRepository>();
     try {
       if (_isEditMode) {
+        final company = Company(
+          code: widget.existingCompany!.code,
+          name: _nameController.text,
+          email: _emailController.text,
+          isActive: _isActive,
+          expiryDate: _expiryDate,
+          createdAt: widget.existingCompany?.createdAt,
+          updatedAt: widget.existingCompany?.updatedAt,
+          android: android,
+          ios: ios,
+        );
         await repo.updateCompany(company);
       } else {
-        await repo.createCompany(company);
+        await repo.createCompanyWithAutoCode(
+          (code) => Company(
+            code: code,
+            name: _nameController.text,
+            email: _emailController.text,
+            isActive: _isActive,
+            expiryDate: _expiryDate,
+            createdAt: null,
+            updatedAt: null,
+            android: android,
+            ios: ios,
+          ),
+        );
       }
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -252,44 +248,13 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
     }
   }
 
-  Widget _codeSuffixIcon() {
-    switch (_codeCheckStatus) {
-      case _CodeCheckStatus.checking:
-        return const Padding(
-          padding: EdgeInsets.all(12),
-          child: SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        );
-      case _CodeCheckStatus.available:
-        return const Icon(Icons.check_circle_rounded, color: AppTheme.success);
-      case _CodeCheckStatus.taken:
-        return const Icon(Icons.cancel_rounded, color: AppTheme.danger);
-      case _CodeCheckStatus.idle:
-        return const SizedBox.shrink();
-    }
-  }
-
-  String? _codeHelperText() {
-    switch (_codeCheckStatus) {
-      case _CodeCheckStatus.available:
-        return 'الكود متاح ✅';
-      case _CodeCheckStatus.taken:
-        return 'الكود مستخدم بالفعل ❌';
-      default:
-        return null;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('yyyy-MM-dd');
 
     return Dialog(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 720),
+        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 760),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Form(
@@ -322,20 +287,35 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                           validator: Validators.email,
                         ),
                         const SizedBox(height: 14),
-                        TextFormField(
-                          controller: _codeController,
-                          enabled: !_isEditMode,
+                        InputDecorator(
                           decoration: InputDecoration(
-                            labelText: 'الكود *',
+                            labelText: 'الكود (يُولَّد تلقائياً)',
                             helperText: _isEditMode
-                                ? 'لا يمكن تعديل الكود بعد الإنشاء. لتغييره، أنشئ شركة جديدة واحذف هذه.'
-                                : (_codeHelperText() ??
-                                    'صيغة مقترحة: WH-XXX-0000'),
+                                ? 'كود ثابت لا يمكن تعديله. لتغييره، أنشئ شركة جديدة واحذف هذه.'
+                                : 'يتولّد رقم تسلسلي فريد تلقائياً عند الحفظ.',
                             helperMaxLines: 2,
-                            suffixIcon:
-                                _isEditMode ? null : _codeSuffixIcon(),
+                            filled: true,
+                            fillColor: Colors.grey.shade100,
                           ),
-                          validator: Validators.code,
+                          child: Row(
+                            children: [
+                              if (_isLoadingPreviewCode) ...[
+                                const SizedBox(
+                                  height: 14,
+                                  width: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2),
+                                ),
+                                const SizedBox(width: 10),
+                                const Text('جارِ توليد الكود...'),
+                              ] else
+                                Text(
+                                  _previewCode ?? '—',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700),
+                                ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 14),
                         InkWell(
@@ -360,7 +340,13 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                           value: _isActive,
                           onChanged: (v) => setState(() => _isActive = v),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 16),
+                        _SectionTitle('استيراد بيانات Firebase (اختياري)'),
+                        const SizedBox(height: 10),
+                        FirebaseImportDropZone(
+                          onImported: _applyImportedFirebaseData,
+                        ),
+                        const SizedBox(height: 20),
                         _SectionTitle('بيانات Firebase - Android'),
                         const SizedBox(height: 10),
                         _buildFieldGrid([

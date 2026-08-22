@@ -13,5 +13,12 @@ service cloud.firestore {
       // الكتابة (إنشاء/تعديل/حذف): فقط للمستخدمين المسجّلين دخول (الإدمن).
       allow create, update, delete: if request.auth != null;
     }
+
+    // مستند عدّاد داخلي (meta/companyCodeCounter) يُستخدم لتوليد أكواد
+    // الشركات التسلسلية (CMP-0001...) ذرّياً عند الإنشاء. لا حاجة لقراءة
+    // عامة له — فقط الإدمن المسجّل دخول يقرأه/يكتبه.
+    match /meta/{docId} {
+      allow read, write: if request.auth != null;
+    }
   }
 }
