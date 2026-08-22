@@ -27,37 +27,40 @@ class CompaniesRepository {
   CollectionReference<Map<String, dynamic>> get _companiesRef =>
       _firestore.collection('companies');
 
-  /// مستند العدّاد المستخدم لتوليد أكواد الشركات التسلسلية (CMP-0001...).
+  /// مستند العدّاد المستخدم لتوليد أكواد الشركات التسلسلية (شارك بين كل
+  /// البادئات، مثال: ACM-001 ثم XYZ-002 ثم ACM-003...).
   DocumentReference<Map<String, dynamic>> get _companyCodeCounterRef =>
       _firestore.collection('meta').doc('companyCodeCounter');
 
-  /// معاينة الكود التالي المتوقّع (لعرضه بالنموذج فور فتحه). قراءة غير
-  /// ذرّية — للعرض فقط، وليست المصدر النهائي للكود.
-  Future<String> previewNextCode() async {
+  /// معاينة الرقم التسلسلي التالي المتوقّع (لعرضه بالنموذج فور فتحه
+  /// وأثناء الكتابة). قراءة غير ذرّية — للعرض فقط، وليست المصدر النهائي.
+  Future<int> previewNextNumber() async {
     final snap = await _companyCodeCounterRef.get();
     final last = snap.data()?['lastNumber'];
-    final next = (last is int ? last : 0) + 1;
-    return CompanyCodeFormat.format(next);
+    return (last is int ? last : 0) + 1;
   }
 
-  /// ينشئ شركة جديدة بكود تسلسلي فريد يُولَّد ذرّياً (atomically) داخل
-  /// معاملة Firestore، لتفادي تعارض الأكواد عند الحفظ المتزامن من أكثر
-  /// من مستخدم في نفس اللحظة. يستدعي [buildCompany] بالكود النهائي بعد
-  /// توليده، ويُرجع الكود المُستخدم فعلياً.
+  /// ينشئ شركة جديدة بكود فريد يُولَّد ذرّياً (atomically) داخل معاملة
+  /// Firestore، لتفادي تعارض الأكواد عند الحفظ المتزامن من أكثر من
+  /// مستخدم بنفس اللحظة. البادئة تُشتق من [companyName]، والرقم التسلسلي
+  /// من عدّاد مشترك. يستدعي [buildCompany] بالكود النهائي بعد توليده،
+  /// ويُرجع الكود المُستخدم فعلياً.
   Future<String> createCompanyWithAutoCode(
+    String companyName,
     Company Function(String code) buildCompany,
   ) {
+    final prefix = CompanyCodeFormat.abbreviate(companyName);
     return _firestore.runTransaction<String>((tx) async {
       final counterSnap = await tx.get(_companyCodeCounterRef);
       var next = ((counterSnap.data()?['lastNumber'] as int?) ?? 0) + 1;
-      var code = CompanyCodeFormat.format(next);
+      var code = CompanyCodeFormat.format(prefix, next);
       var docRef = _companiesRef.doc(code);
       var docSnap = await tx.get(docRef);
       // احتياط دفاعي: لو كان هناك مستند بنفس الكود بالفعل (مثلاً بسبب
       // إنشاء يدوي سابق)، انتقل للرقم التالي حتى نجد كوداً غير مستخدم.
       while (docSnap.exists) {
         next += 1;
-        code = CompanyCodeFormat.format(next);
+        code = CompanyCodeFormat.format(prefix, next);
         docRef = _companiesRef.doc(code);
         docSnap = await tx.get(docRef);
       }
