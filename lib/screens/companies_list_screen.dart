@@ -173,8 +173,8 @@ class _CompaniesListScreenState extends State<CompaniesListScreen> {
                               decoration: BoxDecoration(
                                 color: Colors.grey.shade50,
                                 border: Border(
-                                  bottom: BorderSide(
-                                      color: Colors.grey.shade200),
+                                  bottom:
+                                      BorderSide(color: Colors.grey.shade200),
                                 ),
                               ),
                               child: const CompanyRowHeader(),
@@ -182,7 +182,7 @@ class _CompaniesListScreenState extends State<CompaniesListScreen> {
                             Expanded(
                               child: ListView.separated(
                                 itemCount: companies.length,
-                                separatorBuilder: (_, _) => Divider(
+                                separatorBuilder: (_, i) => Divider(
                                   height: 1,
                                   color: Colors.grey.shade200,
                                 ),
@@ -215,3 +215,4 @@ class _CompaniesListScreenState extends State<CompaniesListScreen> {
     );
   }
 }
+
