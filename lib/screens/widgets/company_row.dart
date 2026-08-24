@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/theme.dart';
@@ -6,12 +7,11 @@ import '../../data/companies_repository.dart';
 import '../../models/company.dart';
 
 const kCompanyRowColumns = <String, double>{
-  'name': 200,
+  'name': 260,
   'email': 220,
   'status': 110,
   'expiry': 150,
   'projectId': 180,
-  'code': 150,
   'actions': 230,
 };
 
@@ -36,7 +36,6 @@ class CompanyRowHeader extends StatelessWidget {
           SizedBox(width: kCompanyRowColumns['status'], child: Text('مفعّلة', style: style)),
           SizedBox(width: kCompanyRowColumns['expiry'], child: Text('تاريخ الانتهاء', style: style)),
           SizedBox(width: kCompanyRowColumns['projectId'], child: Text('Project ID (Android)', style: style)),
-          SizedBox(width: kCompanyRowColumns['code'], child: Text('الكود', style: style)),
           SizedBox(width: kCompanyRowColumns['actions'], child: Text('إجراءات', style: style)),
         ],
       ),
@@ -68,6 +67,14 @@ class CompanyRow extends StatelessWidget {
     return null;
   }
 
+  Future<void> _copyCode(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: company.code));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم نسخ الكود "${company.code}"')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('yyyy-MM-dd');
@@ -81,10 +88,39 @@ class CompanyRow extends StatelessWidget {
           children: [
             SizedBox(
               width: kCompanyRowColumns['name'],
-              child: Text(
-                company.name,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    company.name,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Tooltip(
+                    message: 'انقر لنسخ الكود',
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(4),
+                      onTap: () => _copyCode(context),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.copy_rounded,
+                              size: 12, color: Colors.grey.shade500),
+                          const SizedBox(width: 4),
+                          Text(
+                            company.code,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             SizedBox(
@@ -134,10 +170,6 @@ class CompanyRow extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: Colors.grey.shade700),
               ),
-            ),
-            SizedBox(
-              width: kCompanyRowColumns['code'],
-              child: SelectableText(company.code),
             ),
             SizedBox(
               width: kCompanyRowColumns['actions'],
