@@ -135,7 +135,7 @@ class _InfoRow extends StatelessWidget {
           ),
           Expanded(
             child: SelectableText(
-              value,
+              value.isEmpty ? '—' : value,
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 color: valueColor,

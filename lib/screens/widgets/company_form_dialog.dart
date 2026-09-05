@@ -1,3 +1,5 @@
+import 'dart:developer';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
@@ -5,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../core/theme.dart';
 import '../../core/utils/code_generator.dart';
 import '../../core/utils/validators.dart';
+import '../../core/utils/web_error_unwrap.dart';
 import '../../data/companies_repository.dart';
 import '../../models/company.dart';
 import '../../models/company_firebase_config.dart';
@@ -119,7 +122,8 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
         _previewNextNumber = next;
         _isLoadingPreviewCode = false;
       });
-    } catch (_) {
+    } catch (e) {
+      log('previewNextNumber failed: ${unwrapWebError(e)}');
       if (!mounted) return;
       setState(() => _isLoadingPreviewCode = false);
     }
@@ -259,9 +263,11 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
+      final realError = unwrapWebError(e);
+      log('save failed: $realError');
       setState(() {
         _isSaving = false;
-        _saveError = 'تعذّر الحفظ: $e';
+        _saveError = 'تعذّر الحفظ: $realError';
       });
     }
   }
@@ -321,8 +327,8 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                                 const SizedBox(
                                   height: 14,
                                   width: 14,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2),
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
                                 ),
                                 const SizedBox(width: 10),
                                 const Text('جارِ توليد الكود...'),
@@ -339,8 +345,8 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                         InkWell(
                           onTap: _pickExpiryDate,
                           child: InputDecorator(
-                            decoration:
-                                const InputDecoration(labelText: 'تاريخ الانتهاء *'),
+                            decoration: const InputDecoration(
+                                labelText: 'تاريخ الانتهاء *'),
                             child: Row(
                               children: [
                                 const Icon(Icons.calendar_today_outlined,
@@ -392,10 +398,10 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                           ),
                           TextFormField(
                             controller: _androidProjectId,
-                            decoration: const InputDecoration(
-                                labelText: 'projectId *'),
-                            validator: (v) => Validators.requiredField(v,
-                                label: 'projectId'),
+                            decoration:
+                                const InputDecoration(labelText: 'projectId *'),
+                            validator: (v) =>
+                                Validators.requiredField(v, label: 'projectId'),
                           ),
                           TextFormField(
                             controller: _androidStorageBucket,
@@ -444,8 +450,8 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                           TextFormField(
                             controller: _iosProjectId,
                             onChanged: (_) => setState(() {}),
-                            decoration: const InputDecoration(
-                                labelText: 'projectId'),
+                            decoration:
+                                const InputDecoration(labelText: 'projectId'),
                             validator: (v) =>
                                 _iosConditionalValidator(v, 'projectId'),
                           ),
@@ -460,8 +466,8 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                           TextFormField(
                             controller: _iosBundleId,
                             onChanged: (_) => setState(() {}),
-                            decoration: const InputDecoration(
-                                labelText: 'iosBundleId'),
+                            decoration:
+                                const InputDecoration(labelText: 'iosBundleId'),
                             validator: (v) =>
                                 _iosConditionalValidator(v, 'iosBundleId'),
                           ),
@@ -489,9 +495,8 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton(
-                      onPressed: _isSaving
-                          ? null
-                          : () => Navigator.of(context).pop(),
+                      onPressed:
+                          _isSaving ? null : () => Navigator.of(context).pop(),
                       child: const Text('إلغاء'),
                     ),
                     const SizedBox(width: 8),

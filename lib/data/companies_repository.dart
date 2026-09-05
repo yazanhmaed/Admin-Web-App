@@ -48,9 +48,13 @@ class CompaniesRepository {
   Future<String> createCompanyWithAutoCode(
     String companyName,
     Company Function(String code) buildCompany,
-  ) {
+  ) async {
     final prefix = CompanyCodeFormat.abbreviate(companyName);
-    return _firestore.runTransaction<String>((tx) async {
+    // ملاحظة: على الويب، runTransaction<T> لا يُرجع قيمة الإغلاق فعلياً
+    // (يُرجع null دائماً بسبب قيد بمكتبة cloud_firestore_web)، لذا نلتقط
+    // الكود بمتغيّر بالنطاق الخارجي بدلاً من الاعتماد على قيمة الإرجاع.
+    late final String resultCode;
+    await _firestore.runTransaction<void>((tx) async {
       final counterSnap = await tx.get(_companyCodeCounterRef);
       var next = ((counterSnap.data()?['lastNumber'] as int?) ?? 0) + 1;
       var code = CompanyCodeFormat.format(prefix, next);
@@ -68,8 +72,9 @@ class CompaniesRepository {
       final company = buildCompany(code);
       tx.set(docRef, company.toCreateMap());
       tx.set(_companyCodeCounterRef, {'lastNumber': next});
-      return code;
+      resultCode = code;
     });
+    return resultCode;
   }
 
   /// تدفّق لحظي بكل الشركات (يُستخدم لتحديث القائمة تلقائياً).
