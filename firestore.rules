@@ -20,5 +20,18 @@ service cloud.firestore {
     match /meta/{docId} {
       allow read, write: if request.auth != null;
     }
+
+    match /appVersions/{packageName} {
+      // قراءة مستند إصدار حزمة واحدة بمعرفة اسمها بالضبط: مسموحة للجميع
+      // (تطبيق المخزن يحتاجها للتحقق من وجود تحديث جديد دون تسجيل دخول).
+      allow get: if true;
+
+      // القراءة الجماعية (list) لكل الإصدارات: فقط للمستخدمين المسجّلين
+      // دخول (الإدمن) — نفس نمط مجموعة companies.
+      allow list: if request.auth != null;
+
+      // الكتابة (إنشاء/تعديل/حذف): فقط للمستخدمين المسجّلين دخول (الإدمن).
+      allow create, update, delete: if request.auth != null;
+    }
   }
 }

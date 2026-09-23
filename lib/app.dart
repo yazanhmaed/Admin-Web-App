@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/theme.dart';
 import 'cubit/auth_cubit.dart';
 import 'cubit/companies_cubit.dart';
+import 'data/app_versions_repository.dart';
 import 'data/auth_repository.dart';
 import 'data/companies_repository.dart';
 import 'screens/companies_list_screen.dart';
@@ -20,6 +21,9 @@ class AdminApp extends StatelessWidget {
         RepositoryProvider<AuthRepository>(create: (_) => AuthRepository()),
         RepositoryProvider<CompaniesRepository>(
           create: (_) => CompaniesRepository(),
+        ),
+        RepositoryProvider<AppVersionsRepository>(
+          create: (_) => AppVersionsRepository(),
         ),
       ],
       child: BlocProvider<AuthCubit>(

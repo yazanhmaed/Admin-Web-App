@@ -3,9 +3,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../core/theme.dart';
 import '../cubit/auth_cubit.dart';
+import '../cubit/app_versions_cubit.dart';
 import '../cubit/companies_cubit.dart';
+import '../data/app_versions_repository.dart';
 import '../data/companies_repository.dart';
 import '../models/company.dart';
+import 'app_versions_screen.dart';
 import 'widgets/company_details_dialog.dart';
 import 'widgets/company_form_dialog.dart';
 import 'widgets/company_row.dart';
@@ -98,12 +101,30 @@ class _CompaniesListScreenState extends State<CompaniesListScreen> {
     );
   }
 
+  void _openAppVersionsScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (routeContext) => BlocProvider<AppVersionsCubit>(
+          create: (_) => AppVersionsCubit(
+            repository: routeContext.read<AppVersionsRepository>(),
+          ),
+          child: const AppVersionsScreen(),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('إدارة الشركات'),
         actions: [
+          IconButton(
+            tooltip: 'إصدارات التطبيق',
+            icon: const Icon(Icons.system_update_alt_rounded),
+            onPressed: _openAppVersionsScreen,
+          ),
           IconButton(
             tooltip: 'استيراد من JSON',
             icon: const Icon(Icons.upload_file_outlined),

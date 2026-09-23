@@ -32,4 +32,27 @@ class Validators {
     }
     return null;
   }
+
+  /// صيغة اسم حزمة أندرويد (applicationId)، مثال: com.example.app.
+  static final RegExp _packageNameRegExp =
+      RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$');
+
+  static String? packageName(String? value) {
+    final requiredError = requiredField(value, label: 'اسم الحزمة');
+    if (requiredError != null) return requiredError;
+    if (!_packageNameRegExp.hasMatch(value!.trim())) {
+      return 'صيغة اسم الحزمة غير صحيحة (مثال: com.example.app)';
+    }
+    return null;
+  }
+
+  static String? positiveInteger(String? value, {String label = 'القيمة'}) {
+    final requiredError = requiredField(value, label: label);
+    if (requiredError != null) return requiredError;
+    final n = int.tryParse(value!.trim());
+    if (n == null || n <= 0) {
+      return '$label يجب أن يكون رقماً صحيحاً موجباً';
+    }
+    return null;
+  }
 }

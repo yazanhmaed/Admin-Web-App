@@ -1,0 +1,16 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // ملفات تحديثات التطبيق (APK)، مسار: app-releases/{packageName}/{versionCode}.apk
+    match /app-releases/{packageName}/{fileName} {
+      // قراءة/تنزيل ملف الـ APK: مسموحة للجميع — تطبيق المخزن يحمّل رابط
+      // apkDownloadUrl مباشرة دون تسجيل دخول (نفس نمط قراءة مستند الشركة
+      // الواحد بـ firestore.rules).
+      allow read: if true;
+
+      // الرفع/الاستبدال/الحذف: فقط للمستخدمين المسجّلين دخول (الإدمن) —
+      // نفس نمط الكتابة على مجموعتَي companies و appVersions بـ Firestore.
+      allow write: if request.auth != null;
+    }
+  }
+}
