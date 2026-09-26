@@ -29,6 +29,7 @@ dependencies:
   intl: ^0.20.1
   file_picker: ^8.1.6
   xml: ^6.5.0
+  archive: ^4.3.0
 
 dev_dependencies:
   flutter_test:

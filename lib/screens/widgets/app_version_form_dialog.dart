@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme.dart';
+import '../../core/utils/apk_manifest_parser.dart';
 import '../../core/utils/validators.dart';
 import '../../core/utils/web_error_unwrap.dart';
 import '../../data/app_versions_repository.dart';
@@ -14,8 +15,14 @@ import '../../models/app_version.dart';
 /// نموذج إضافة/تعديل إصدار تطبيق. عند تمرير [existingVersion] يعمل بوضع
 /// التعديل (اسم الحزمة غير قابل للتغيير حينها، لأنه معرّف المستند).
 ///
+/// اسم الحزمة (Package Name) **لا يُكتب يدوياً إطلاقاً**: يُستخرج تلقائياً
+/// من ملف الـ APK المختار فور اختياره (عبر قراءة AndroidManifest.xml
+/// الثنائي داخل الملف وتحليل سمة `package`)، ويُعرض للإدمن كحقل للقراءة
+/// فقط للتأكيد قبل الحفظ — راجع [extractPackageNameFromApk]. فشل
+/// الاستخراج يمنع الحفظ كلياً ولا يوجد أي رجوع لإدخال يدوي.
+///
 /// رمز الإصدار (versionCode) واسم الإصدار (versionName) حقول يدوية بالكامل
-/// — لا يوجد أي استخراج تلقائي من ملف الـ APK عمداً، حتى يبقى القرار
+/// — لا يوجد أي استخراج تلقائي لهما من ملف الـ APK عمداً، حتى يبقى القرار
 /// بيد الإدمن بالكامل.
 class AppVersionFormDialog extends StatefulWidget {
   const AppVersionFormDialog({
@@ -26,8 +33,9 @@ class AppVersionFormDialog extends StatefulWidget {
 
   final AppVersion? existingVersion;
 
-  /// كل إصدارات التطبيقات الحالية — تُستخدم لاقتراحات اسم الحزمة ولإيجاد
-  /// القيمة الحالية المنشورة عند التحقق من تراجع رمز الإصدار.
+  /// كل إصدارات التطبيقات الحالية — تُستخدم لإيجاد القيمة الحالية المنشورة
+  /// عند التحقق من تراجع رمز الإصدار (وربط رابط APK الحالي عند عدم اختيار
+  /// ملف جديد بوضع التعديل).
   final List<AppVersion> allVersions;
 
   bool get isEditMode => existingVersion != null;
@@ -39,8 +47,6 @@ class AppVersionFormDialog extends StatefulWidget {
 class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
   final _formKey = GlobalKey<FormState>();
 
-  late final TextEditingController _packageNameController;
-  final _packageNameFocusNode = FocusNode();
   late final TextEditingController _versionCodeController;
   late final TextEditingController _versionNameController;
   late final TextEditingController _releaseNotesController;
@@ -48,6 +54,10 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
   PlatformFile? _pickedFile;
   Uint8List? _pickedFileBytes;
 
+  /// اسم الحزمة المُستخرَج تلقائياً من آخر ملف APK تم اختياره بنجاح.
+  String? _detectedPackageName;
+
+  bool _isParsingFile = false;
   bool _isSaving = false;
   double? _uploadProgress;
   String? _saveError;
@@ -55,11 +65,17 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
 
   bool get _isEditMode => widget.isEditMode;
 
+  /// هل الملف المختار حالياً (إن وُجد) يطابق حزمة المستند قيد التعديل؟
+  /// بوضع الإضافة لا يوجد "تعارض" أصلاً — اسم الحزمة يُشتق من الملف مباشرة.
+  bool get _hasPackageMismatch =>
+      _isEditMode &&
+      _detectedPackageName != null &&
+      _detectedPackageName != widget.existingVersion!.packageName;
+
   @override
   void initState() {
     super.initState();
     final v = widget.existingVersion;
-    _packageNameController = TextEditingController(text: v?.packageName ?? '');
     _versionCodeController =
         TextEditingController(text: v != null ? '${v.latestVersionCode}' : '');
     _versionNameController = TextEditingController(text: v?.latestVersionName ?? '');
@@ -68,16 +84,11 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
 
   @override
   void dispose() {
-    _packageNameController.dispose();
-    _packageNameFocusNode.dispose();
     _versionCodeController.dispose();
     _versionNameController.dispose();
     _releaseNotesController.dispose();
     super.dispose();
   }
-
-  List<String> get _knownPackageNames =>
-      widget.allVersions.map((v) => v.packageName).toSet().toList()..sort();
 
   AppVersion? _findExisting(String packageName) {
     final trimmed = packageName.trim();
@@ -95,21 +106,59 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
     );
     if (result == null || result.files.isEmpty) return;
     final file = result.files.single;
-    if (file.bytes == null) {
-      setState(() => _fileError = 'تعذّر قراءة الملف المحدد.');
+
+    setState(() {
+      _fileError = null;
+      _isParsingFile = true;
+    });
+
+    final bytes = file.bytes;
+    if (bytes == null) {
+      setState(() {
+        _isParsingFile = false;
+        _fileError = 'تعذّر قراءة الملف المحدد.';
+      });
       return;
     }
-    setState(() {
-      _pickedFile = file;
-      _pickedFileBytes = file.bytes;
-      _fileError = null;
-    });
+
+    try {
+      // فك الضغط وتحليل AndroidManifest.xml الثنائي عملية سريعة بالذاكرة
+      // (لا تحتاج isolate منفصل)، لكنها قد تستغرق لحظة لملفات كبيرة.
+      final detected = extractPackageNameFromApk(bytes);
+      if (!mounted) return;
+      setState(() {
+        _pickedFile = file;
+        _pickedFileBytes = bytes;
+        _detectedPackageName = detected;
+        _isParsingFile = false;
+      });
+    } on ApkManifestParseException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isParsingFile = false;
+        _pickedFile = null;
+        _pickedFileBytes = null;
+        _detectedPackageName = null;
+        _fileError = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isParsingFile = false;
+        _pickedFile = null;
+        _pickedFileBytes = null;
+        _detectedPackageName = null;
+        _fileError = 'تعذّر تحليل ملف الـ APK: $e';
+      });
+    }
   }
 
   void _clearPickedFile() {
     setState(() {
       _pickedFile = null;
       _pickedFileBytes = null;
+      _detectedPackageName = null;
+      _fileError = null;
     });
   }
 
@@ -147,16 +196,26 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
   }
 
   Future<void> _submit() async {
-    setState(() {
-      _saveError = null;
-      _fileError = null;
-    });
+    setState(() => _saveError = null);
     if (!_formKey.currentState!.validate()) return;
 
-    final packageName = _packageNameController.text.trim();
-    final existingForPackage = _findExisting(packageName);
-    final apkUrlFallback = existingForPackage?.apkDownloadUrl;
+    if (_hasPackageMismatch) {
+      setState(() => _fileError =
+          'اسم الحزمة المستخرج من الملف المختار لا يطابق حزمة هذا الإصدار — لا يمكن الحفظ بهذا الملف.');
+      return;
+    }
 
+    final packageName = _isEditMode
+        ? widget.existingVersion!.packageName
+        : _detectedPackageName;
+
+    if (packageName == null || packageName.isEmpty) {
+      setState(() => _fileError =
+          'الرجاء اختيار ملف APK صالح ليتم تحديد اسم الحزمة تلقائياً.');
+      return;
+    }
+
+    final apkUrlFallback = _findExisting(packageName)?.apkDownloadUrl;
     if (_pickedFileBytes == null &&
         (apkUrlFallback == null || apkUrlFallback.isEmpty)) {
       setState(() => _fileError = 'الرجاء اختيار ملف APK.');
@@ -217,7 +276,7 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
   Widget build(BuildContext context) {
     return Dialog(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 760),
+        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 800),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Form(
@@ -235,8 +294,18 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _buildPackageNameField(),
+                        _buildApkPicker(),
                         const SizedBox(height: 14),
+                        _buildPackageNameDisplay(),
+                        if (_fileError != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _fileError!,
+                            style: const TextStyle(
+                                color: AppTheme.danger, fontSize: 12),
+                          ),
+                        ],
+                        const SizedBox(height: 20),
                         TextFormField(
                           controller: _versionCodeController,
                           keyboardType: TextInputType.number,
@@ -269,16 +338,6 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
                             alignLabelWithHint: true,
                           ),
                         ),
-                        const SizedBox(height: 20),
-                        _buildApkPicker(),
-                        if (_fileError != null) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            _fileError!,
-                            style: const TextStyle(
-                                color: AppTheme.danger, fontSize: 12),
-                          ),
-                        ],
                         if (_saveError != null) ...[
                           const SizedBox(height: 16),
                           Container(
@@ -308,7 +367,10 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton(
-                      onPressed: _isSaving ? null : _submit,
+                      onPressed:
+                          (_isSaving || _isParsingFile || _hasPackageMismatch)
+                              ? null
+                              : _submit,
                       child: _isSaving
                           ? const SizedBox(
                               height: 18,
@@ -328,71 +390,52 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
     );
   }
 
-  Widget _buildPackageNameField() {
-    if (_isEditMode) {
-      return InputDecorator(
-        decoration: const InputDecoration(
-          labelText: 'اسم الحزمة (Package Name)',
-          helperText: 'لا يمكن تعديله — هو معرّف المستند بقاعدة البيانات.',
-          helperMaxLines: 2,
-          filled: true,
-          fillColor: Color(0xFFF1F5F9),
-        ),
-        child: Text(
-          widget.existingVersion!.packageName,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-      );
-    }
+  /// حقل عرض اسم الحزمة — للقراءة فقط دائماً. بوضع التعديل يعرض حزمة
+  /// المستند الثابتة، وبوضع الإضافة يعرض القيمة المُستخرَجة من آخر ملف APK
+  /// ناجح (أو تلميحاً بانتظار اختيار ملف).
+  Widget _buildPackageNameDisplay() {
+    final packageName =
+        _isEditMode ? widget.existingVersion!.packageName : _detectedPackageName;
+    final mismatch = _hasPackageMismatch;
 
-    return RawAutocomplete<String>(
-      textEditingController: _packageNameController,
-      focusNode: _packageNameFocusNode,
-      optionsBuilder: (textEditingValue) {
-        final query = textEditingValue.text.trim().toLowerCase();
-        if (query.isEmpty) return _knownPackageNames;
-        return _knownPackageNames
-            .where((p) => p.toLowerCase().contains(query));
-      },
-      onSelected: (selection) => _packageNameController.text = selection,
-      fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
-        return TextFormField(
-          controller: controller,
-          focusNode: focusNode,
-          decoration: const InputDecoration(
-            labelText: 'اسم الحزمة (Package Name) *',
-            helperText:
-                'مثال: com.example.warehouse — يمكن اختيار حزمة سابقة من القائمة أو كتابة واحدة جديدة.',
-            helperMaxLines: 2,
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: 'اسم الحزمة (Package Name)',
+        helperText: _isEditMode
+            ? 'لا يمكن تعديله — هو معرّف المستند بقاعدة البيانات.'
+            : 'يُستخرج تلقائياً من ملف الـ APK فور اختياره — لا يمكن كتابته يدوياً.',
+        helperMaxLines: 2,
+        filled: true,
+        fillColor: mismatch
+            ? AppTheme.danger.withValues(alpha: 0.06)
+            : const Color(0xFFF1F5F9),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            mismatch
+                ? Icons.error_outline_rounded
+                : (packageName != null
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.hourglass_empty_rounded),
+            size: 16,
+            color: mismatch
+                ? AppTheme.danger
+                : (packageName != null ? AppTheme.success : Colors.grey.shade500),
           ),
-          validator: Validators.packageName,
-        );
-      },
-      optionsViewBuilder: (context, onSelected, options) {
-        return Align(
-          alignment: Alignment.topRight,
-          child: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(10),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 200, maxWidth: 592),
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                shrinkWrap: true,
-                itemCount: options.length,
-                itemBuilder: (context, index) {
-                  final option = options.elementAt(index);
-                  return ListTile(
-                    dense: true,
-                    title: Text(option),
-                    onTap: () => onSelected(option),
-                  );
-                },
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              packageName ?? 'بانتظار اختيار ملف APK...',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: packageName == null ? Colors.grey.shade500 : null,
               ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -402,12 +445,30 @@ class _AppVersionFormDialogState extends State<AppVersionFormDialog> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _SectionTitle('ملف الـ APK'),
+        const SizedBox(height: 6),
+        Text(
+          _isEditMode
+              ? 'استبدال الملف اختياري — إن اخترت ملفاً جديداً يجب أن يكون لنفس الحزمة.'
+              : 'اختر ملف الـ APK أولاً — سيُستخرج منه اسم الحزمة تلقائياً.',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        ),
         const SizedBox(height: 10),
         OutlinedButton.icon(
-          onPressed: _isSaving ? null : _pickApk,
-          icon: const Icon(Icons.upload_file_outlined, size: 18),
+          onPressed: (_isSaving || _isParsingFile) ? null : _pickApk,
+          icon: _isParsingFile
+              ? const SizedBox(
+                  height: 16,
+                  width: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.upload_file_outlined, size: 18),
           label: Text(
-              _pickedFile == null ? 'اختيار ملف APK' : 'استبدال الملف المحدد'),
+            _isParsingFile
+                ? 'جارِ تحليل الملف...'
+                : (_pickedFile == null
+                    ? 'اختيار ملف APK'
+                    : 'استبدال الملف المحدد'),
+          ),
         ),
         const SizedBox(height: 8),
         if (_pickedFile != null)
