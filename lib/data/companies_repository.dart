@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../core/company_features.dart';
 import '../core/utils/code_generator.dart';
 import '../models/company.dart';
 import '../models/company_firebase_config.dart';
@@ -97,8 +98,16 @@ class CompaniesRepository {
   }
 
   /// تحديث بيانات شركة موجودة (الكود لا يتغيّر بهذه العملية).
-  Future<void> updateCompany(Company company) {
-    return _companiesRef.doc(company.code.trim()).update(company.toUpdateMap());
+  ///
+  /// [changedFeatures]: الميزات التي غيّرها المستخدم فقط — تُكتب بمسارات
+  /// منقّطة فلا تتأثر بقية مفاتيح `features`.
+  Future<void> updateCompany(
+    Company company, {
+    Map<String, bool> changedFeatures = const {},
+  }) {
+    return _companiesRef
+        .doc(company.code.trim())
+        .update(company.toUpdateMap(changedFeatures: changedFeatures));
   }
 
   /// تغيير كود شركة: ينشئ مستنداً جديداً بالكود الجديد ويحذف القديم معاً (batch).
@@ -118,6 +127,14 @@ class CompaniesRepository {
   Future<void> setActive(String code, bool isActive) {
     return _companiesRef.doc(code.trim()).update({
       'isActive': isActive,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// تبديل ميزة واحدة مباشرة (من القائمة) دون لمس بقية المفاتيح.
+  Future<void> setFeature(String code, String key, bool enabled) {
+    return _companiesRef.doc(code.trim()).update({
+      'features.$key': enabled,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -173,6 +190,8 @@ class CompaniesRepository {
         ios: IosFirebaseConfig.fromMap(
           firebaseMap?['ios'] as Map<String, dynamic>?,
         ),
+        // اختياري: يُقبل فقط إن وُجد، والقيم غير bool تُتجاهل.
+        features: parseFeaturesMap(map['features']),
       );
 
       try {

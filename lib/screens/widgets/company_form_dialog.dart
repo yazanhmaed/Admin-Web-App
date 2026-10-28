@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/company_features.dart';
 import '../../core/theme.dart';
 import '../../core/utils/code_generator.dart';
 import '../../core/utils/validators.dart';
@@ -51,6 +52,18 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
 
   late DateTime _expiryDate;
   late bool _isActive;
+
+  /// قيم الميزات كما في المستند عند الفتح (كل المفاتيح، حتى غير المعرّفة
+  /// بالسجلّ)، والقيم الحالية بالنموذج.
+  late final Map<String, bool> _initialFeatures;
+  late final Map<String, bool> _features;
+
+  /// المفاتيح التي تغيّرت فعلاً عن القيم الأصلية — وحدها تُكتب عند التعديل.
+  Map<String, bool> get _changedFeatures => {
+        for (final f in kCompanyFeatures)
+          if ((_features[f.key] ?? false) != (_initialFeatures[f.key] ?? false))
+            f.key: _features[f.key] ?? false,
+      };
 
   /// كود الشركة: بوضع التعديل هو كود الشركة الحالي (ثابت). بوضع الإضافة
   /// نعرض معاينة حيّة تتحدّث مع كل تغيير باسم الشركة (البادئة تُشتق من
@@ -102,6 +115,8 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
     _expiryDate =
         company?.expiryDate ?? DateTime.now().add(const Duration(days: 365));
     _isActive = company?.isActive ?? true;
+    _initialFeatures = Map.of(company?.features ?? const {});
+    _features = Map.of(_initialFeatures);
 
     if (!_isEditMode) {
       // البادئة تتحدّث تلقائياً مع كل تغيير بالاسم (معاينة محلية فورية).
@@ -242,8 +257,9 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
           updatedAt: widget.existingCompany?.updatedAt,
           android: android,
           ios: ios,
+          features: widget.existingCompany!.features,
         );
-        await repo.updateCompany(company);
+        await repo.updateCompany(company, changedFeatures: _changedFeatures);
       } else {
         await repo.createCompanyWithAutoCode(
           _nameController.text,
@@ -257,6 +273,10 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
             updatedAt: null,
             android: android,
             ios: ios,
+            features: {
+              for (final e in _features.entries)
+                if (e.value) e.key: true,
+            },
           ),
         );
       }
@@ -364,6 +384,24 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
                           value: _isActive,
                           onChanged: (v) => setState(() => _isActive = v),
                         ),
+                        const SizedBox(height: 20),
+                        _SectionTitle('الميزات'),
+                        const SizedBox(height: 4),
+                        Text(
+                          'تُطبَّق على كل مستخدمي الشركة عند تسجيل دخولهم التالي.',
+                          style: TextStyle(
+                              color: Colors.grey.shade600, fontSize: 12),
+                        ),
+                        for (final f in kCompanyFeatures)
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(f.label),
+                            subtitle: Text(f.description,
+                                style: const TextStyle(fontSize: 12)),
+                            value: _features[f.key] ?? false,
+                            onChanged: (v) =>
+                                setState(() => _features[f.key] = v),
+                          ),
                         const SizedBox(height: 20),
                         _SectionTitle('بيانات Firebase - Android'),
                         const SizedBox(height: 10),

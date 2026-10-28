@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:equatable/equatable.dart';
 
+import '../core/company_features.dart';
 import 'company_firebase_config.dart';
 
 /// نموذج بيانات "الشركة" كما يُخزَّن بمجموعة (collection) `companies`.
@@ -18,6 +19,7 @@ class Company extends Equatable {
     required this.updatedAt,
     required this.android,
     required this.ios,
+    this.features = const {},
   });
 
   final String code;
@@ -29,6 +31,12 @@ class Company extends Equatable {
   final DateTime? updatedAt;
   final AndroidFirebaseConfig android;
   final IosFirebaseConfig ios;
+
+  /// الميزات المخفية المفعّلة/المعطّلة لهذه الشركة (`features` بالمستند).
+  /// تحوي كل المفاتيح الموجودة بـ Firestore، حتى غير المعرّفة بالسجلّ.
+  final Map<String, bool> features;
+
+  bool isFeatureEnabled(String key) => features[key] ?? false;
 
   bool get isExpired => expiryDate.isBefore(DateTime.now());
 
@@ -60,6 +68,7 @@ class Company extends Equatable {
       ios: IosFirebaseConfig.fromMap(
         firebaseMap?['ios'] as Map<String, dynamic>?,
       ),
+      features: parseFeaturesMap(data['features']),
     );
   }
 
@@ -82,10 +91,18 @@ class Company extends Equatable {
           'android': android.toMap(),
           'ios': ios.toMap(),
         },
+        if (features.isNotEmpty) 'features': Map<String, bool>.from(features),
       };
 
   /// يبني الخريطة التي تُكتب إلى Firestore عند التعديل (update) — يحافظ على createdAt.
-  Map<String, dynamic> toUpdateMap() => {
+  ///
+  /// لا يكتب خريطة `features` كاملة؛ فقط المفاتيح المذكورة بـ
+  /// [changedFeatures] عبر مسارات منقّطة (`features.<key>`)، حتى لا تُمسح
+  /// أي مفاتيح أخرى موجودة بالمستند.
+  Map<String, dynamic> toUpdateMap({
+    Map<String, bool> changedFeatures = const {},
+  }) =>
+      {
         'name': name.trim(),
         'code': code.trim(),
         'email': email.trim(),
@@ -96,6 +113,7 @@ class Company extends Equatable {
           'android': android.toMap(),
           'ios': ios.toMap(),
         },
+        for (final e in changedFeatures.entries) 'features.${e.key}': e.value,
       };
 
   Company copyWith({
@@ -108,6 +126,7 @@ class Company extends Equatable {
     DateTime? updatedAt,
     AndroidFirebaseConfig? android,
     IosFirebaseConfig? ios,
+    Map<String, bool>? features,
   }) {
     return Company(
       code: code ?? this.code,
@@ -119,6 +138,7 @@ class Company extends Equatable {
       updatedAt: updatedAt ?? this.updatedAt,
       android: android ?? this.android,
       ios: ios ?? this.ios,
+      features: features ?? this.features,
     );
   }
 
@@ -133,5 +153,6 @@ class Company extends Equatable {
         updatedAt,
         android,
         ios,
+        features,
       ];
 }

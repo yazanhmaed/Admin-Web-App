@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/company_features.dart';
 import '../../core/theme.dart';
 import '../../models/company.dart';
 
@@ -8,6 +9,13 @@ class CompanyDetailsDialog extends StatelessWidget {
   const CompanyDetailsDialog({super.key, required this.company});
 
   final Company company;
+
+  String _enabledFeaturesLabel() {
+    final labels = kCompanyFeatures
+        .where((f) => company.isFeatureEnabled(f.key))
+        .map((f) => f.label);
+    return labels.isEmpty ? '—' : labels.join('، ');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,17 +41,16 @@ class CompanyDetailsDialog extends StatelessWidget {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: (company.isActive
-                              ? AppTheme.success
-                              : Colors.grey)
+                      color: (company.isActive ? AppTheme.success : Colors.grey)
                           .withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
                       company.isActive ? 'مفعّلة' : 'غير مفعّلة',
                       style: TextStyle(
-                        color:
-                            company.isActive ? AppTheme.success : Colors.grey.shade700,
+                        color: company.isActive
+                            ? AppTheme.success
+                            : Colors.grey.shade700,
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
@@ -69,9 +76,12 @@ class CompanyDetailsDialog extends StatelessWidget {
                                 : null),
                       ),
                       if (company.createdAt != null)
-                        _InfoRow('تاريخ الإنشاء', dateFormat.format(company.createdAt!)),
+                        _InfoRow('تاريخ الإنشاء',
+                            dateFormat.format(company.createdAt!)),
                       if (company.updatedAt != null)
-                        _InfoRow('آخر تعديل', dateFormat.format(company.updatedAt!)),
+                        _InfoRow(
+                            'آخر تعديل', dateFormat.format(company.updatedAt!)),
+                      _InfoRow('الميزات', _enabledFeaturesLabel()),
                       const SizedBox(height: 16),
                       _SectionTitle('بيانات Firebase - Android'),
                       const SizedBox(height: 8),

@@ -44,6 +44,18 @@ class _CompaniesListScreenState extends State<CompaniesListScreen> {
     }
   }
 
+  Future<void> _toggleFeature(Company company, String key, bool value) async {
+    final repo = context.read<CompaniesRepository>();
+    try {
+      await repo.setFeature(company.code, key, value);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذّر تحديث الميزة: $e')),
+      );
+    }
+  }
+
   Future<void> _confirmDelete(Company company) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -213,6 +225,8 @@ class _CompaniesListScreenState extends State<CompaniesListScreen> {
                                     company: company,
                                     onToggleActive: (value) =>
                                         _toggleActive(company, value),
+                                    onToggleFeature: (key, value) =>
+                                        _toggleFeature(company, key, value),
                                     onEdit: () => _openEditDialog(company),
                                     onRenew: () => _openRenewDialog(company),
                                     onDelete: () => _confirmDelete(company),
@@ -236,4 +250,3 @@ class _CompaniesListScreenState extends State<CompaniesListScreen> {
     );
   }
 }
-
